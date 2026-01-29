@@ -1,0 +1,17 @@
+[project]
+name = "reconn-wave-power"
+version = "0.1.0"
+description = "Tools to compute wave power spectra from hybrid simulations (electric and magnetic fields)"
+authors = [{name = "Your Name", email = "you@example.com"}]
+dependencies = [
+  "numpy>=1.23",
+  "scipy>=1.9",
+  "xarray>=2022.3",
+  "dask>=2022.2 ; extra == 'dask'",
+  "matplotlib>=3.5",
+  "pandas>=1.4",
+  "dhybridrpy @ git+https://github.com/bwostler/dhybridrpy.git"
+]
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
