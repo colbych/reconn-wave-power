@@ -2,7 +2,7 @@
 name = "reconn-wave-power"
 version = "0.1.0"
 description = "Tools to compute wave power spectra from hybrid simulations (electric and magnetic fields)"
-authors = [{name = "Your Name", email = "you@example.com"}]
+authors = [{name = "Colby Haggerty", email = "colbyh@hawaii.edu"}]
 dependencies = [
   "numpy>=1.23",
   "scipy>=1.9",
