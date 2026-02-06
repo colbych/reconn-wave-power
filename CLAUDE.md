@@ -30,9 +30,8 @@ python -m pytest tests/test_spectrum.py
 conda activate reconn-wave-power
 
 # Or create it if it doesn't exist
-conda create -n reconn-wave-power python=3.11 numpy scipy xarray matplotlib pandas pytest -y
+conda create -n reconn-wave-power python=3.11 numpy scipy xarray matplotlib pandas pytest dhybridrpy -y
 conda activate reconn-wave-power
-pip install git+https://github.com/bwostler/dhybridrpy.git
 pip install -e .
 ```
 
@@ -60,4 +59,4 @@ The package (`src/reconn_wave_power/`) has four modules:
 
 ## Dependencies
 
-Core: numpy, scipy, xarray, matplotlib, pandas, dhybridrpy (from git+https://github.com/bwostler/dhybridrpy.git)
+Core: numpy, scipy, xarray, matplotlib, pandas, dhybridrpy
