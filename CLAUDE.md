@@ -15,7 +15,7 @@ python -m pip install -e .
 # Install with optional dask support
 python -m pip install -e ".[dask]"
 
-# Run all tests
+# Run all tests (with conda env active)
 python -m pytest tests/
 
 # Run a specific test file
@@ -23,7 +23,18 @@ python -m pytest tests/test_io.py
 python -m pytest tests/test_spectrum.py
 ```
 
-Note: pytest must be installed separately (`pip install pytest`).
+## Conda Environment
+
+```bash
+# Activate the project environment
+conda activate reconn-wave-power
+
+# Or create it if it doesn't exist
+conda create -n reconn-wave-power python=3.11 numpy scipy xarray matplotlib pandas pytest -y
+conda activate reconn-wave-power
+pip install git+https://github.com/bwostler/dhybridrpy.git
+pip install -e .
+```
 
 ## Architecture
 
