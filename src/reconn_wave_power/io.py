@@ -36,9 +36,19 @@ def _infer_spatial_dims_and_coords(field) -> Tuple[Tuple[str, ...], Dict[str, ob
     if data is None:
         raise ValueError("Field object has no .data attribute")
 
-    xd = getattr(field, "xdata", None)
-    yd = getattr(field, "ydata", None)
-    zd = getattr(field, "zdata", None)
+    # Access coordinate properties safely - they may raise IndexError for lower-dim data
+    try:
+        xd = field.xdata
+    except (AttributeError, IndexError):
+        xd = None
+    try:
+        yd = field.ydata
+    except (AttributeError, IndexError):
+        yd = None
+    try:
+        zd = field.zdata
+    except (AttributeError, IndexError):
+        zd = None
 
     # Determine rank from available coords or data.ndim
     ndim = getattr(data, "ndim", None)
@@ -57,19 +67,19 @@ def _infer_spatial_dims_and_coords(field) -> Tuple[Tuple[str, ...], Dict[str, ob
         if xd is not None:
             coords["x"] = xd
     elif ndim == 2:
-        dims = ("y", "x")
-        if yd is not None:
-            coords["y"] = yd
+        dims = ("x", "y")
         if xd is not None:
             coords["x"] = xd
+        if yd is not None:
+            coords["y"] = yd
     elif ndim == 3:
-        dims = ("z", "y", "x")
+        dims = ("x", "y", "z")
+        if xd is not None:
+            coords["x"] = xd
+        if yd is not None:
+            coords["y"] = yd
         if zd is not None:
             coords["z"] = zd
-        if yd is not None:
-            coords["y"] = yd
-        if xd is not None:
-            coords["x"] = xd
     else:
         # fallback to indexed dims
         shape = getattr(data, "shape", ())
