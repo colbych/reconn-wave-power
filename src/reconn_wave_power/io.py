@@ -146,6 +146,7 @@ def read_simulation(
     fields: Sequence[str] = ("E", "B"),
     field_type: str = "Total",
     lazy: bool = True,
+    progress: bool = False,
 ) -> xr.Dataset:
     """
     Read simulation data (electric and magnetic fields) and return an xarray.Dataset.
@@ -162,6 +163,8 @@ def read_simulation(
         "Total", "External", or "Self"
     lazy:
         Pass-through to constructor if we instantiate DHybridrpy here.
+    progress:
+        If True, display a progress bar while loading timesteps.
     """
     dpy = _ensure_dhybridrpy_instance(source, input_file, output_folder, lazy)
 
@@ -186,7 +189,19 @@ def read_simulation(
             seen.add(c)
 
     var_arrays: Dict[str, xr.DataArray] = {}
-    for ts in timesteps:
+
+    # Wrap timesteps with progress bar if requested
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+            timestep_iter = tqdm(timesteps, desc="Loading timesteps", unit="ts")
+        except ImportError:
+            warnings.warn("tqdm not installed; progress bar disabled. Install with: pip install tqdm")
+            timestep_iter = timesteps
+    else:
+        timestep_iter = timesteps
+
+    for ts in timestep_iter:
         ts_obj = dpy.timestep(ts)
         time_val = getattr(ts_obj, "time", None)
         if time_val is None:
