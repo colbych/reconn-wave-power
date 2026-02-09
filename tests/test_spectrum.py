@@ -14,6 +14,21 @@ def test_compute_psd_time_sine():
     peak_freq = f[peak_idx]
     assert abs(peak_freq - f0) < 0.5  # allow tolerance
 
+def test_compute_psd_time_fft_sine():
+    # Same sine wave test but using windowed FFT method
+    f0 = 5.0
+    dt = 0.001
+    t = np.arange(0, 2.0, dt)
+    signal_data = np.sin(2 * np.pi * f0 * t)
+    da = xr.DataArray(signal_data, dims=("time",), coords={"time": t})
+    f, Pxx = compute_psd_time(da, dt=dt, method="fft")
+    peak_idx = np.argmax(Pxx)
+    peak_freq = f[peak_idx]
+    assert abs(peak_freq - f0) < 0.5  # allow tolerance
+    # FFT should give finer frequency resolution than default Welch
+    assert len(f) == len(t) // 2 + 1
+
+
 def test_compute_psd_space_sine():
     # Spatial sine with wavelength lambda = 2.0 -> k_cycles = 1/lambda
     lam = 2.0

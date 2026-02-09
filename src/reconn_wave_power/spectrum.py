@@ -24,9 +24,20 @@ def compute_psd_time(
     """
     Compute 1D PSD over the time axis for an xarray.DataArray.
 
+    Parameters:
+      da: DataArray with the time axis present
+      dt: temporal spacing
+      method: "welch" for Welch's method (segment-averaged), or "fft" for a
+              single windowed FFT (better frequency resolution, noisier).
+      nperseg: samples per segment (Welch only; ignored for "fft")
+      window: window function name (applied in both methods)
+      detrend: if True, subtract the mean along the axis before computing
+      axis: name of the time dimension
+
     Returns:
-      f: frequency bins [Hz]
-      Pxx: PSD values with shape matching da but with `axis` replaced by frequency axis length
+      f: frequency bins [Hz] (one-sided, length n//2+1)
+      Pxx: PSD values with shape matching da but with `axis` replaced by
+           frequency axis length
     """
     if axis not in da.dims:
         raise ValueError(f"Axis '{axis}' not in DataArray dims: {da.dims}")
@@ -38,7 +49,28 @@ def compute_psd_time(
     data = arr.values
     axis_num = arr.get_axis_num(axis)
     fs = 1.0 / dt
-    f, Pxx = signal.welch(data, fs=fs, window=window, nperseg=nperseg, axis=axis_num)
+
+    if method == "welch":
+        f, Pxx = signal.welch(data, fs=fs, window=window, nperseg=nperseg, axis=axis_num)
+    elif method == "fft":
+        n = data.shape[axis_num]
+        # Apply window
+        w = signal.get_window(window, n)
+        shape = [1] * data.ndim
+        shape[axis_num] = n
+        data = data * w.reshape(tuple(shape))
+        # One-sided rfft
+        fft_vals = np.fft.rfft(data, axis=axis_num)
+        f = np.fft.rfftfreq(n, d=dt)
+        # PSD: |FFT|^2 normalized by fs*N (consistent with Welch scaling)
+        Pxx = (np.abs(fft_vals) ** 2) / (fs * n)
+        # Double the one-sided bins (except DC and Nyquist) to conserve power
+        slices = [slice(None)] * data.ndim
+        slices[axis_num] = slice(1, -1)
+        Pxx[tuple(slices)] *= 2.0
+    else:
+        raise ValueError(f"method must be 'welch' or 'fft', got '{method}'")
+
     return f, Pxx
 
 
