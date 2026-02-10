@@ -14,11 +14,10 @@ from typing import Tuple
 
 import numpy as np
 import xarray as xr
-from scipy.interpolate import RegularGridInterpolator
-
 from reconn_wave_power.lagrangian import (
     compute_exb_velocity,
     trace_trajectory,
+    trace_trajectories,
 )
 
 
@@ -53,48 +52,49 @@ def _trace_v1_scipy(ds, x0, y0, t0_idx, dt):
     y_vals = ds["y"].values
     times = ds["time"].values
     nt = len(times)
-    x_min, x_max = float(x_vals[0]), float(x_vals[-1])
-    y_min, y_max = float(y_vals[0]), float(y_vals[-1])
-
-    def _in_domain(x, y):
-        return x_min <= x <= x_max and y_min <= y <= y_max
+    x_min = float(x_vals[0])
+    y_min = float(y_vals[0])
+    dx_grid = float(x_vals[1] - x_vals[0])
+    dy_grid = float(y_vals[1] - y_vals[0])
+    nx, ny = len(x_vals), len(y_vals)
+    Lx = nx * dx_grid
+    Ly = ny * dy_grid
 
     vx_all, vy_all = compute_exb_velocity(ds)
+
+    def _bilinear_periodic(field_2d, x, y):
+        import math
+        fi = ((x - x_min) / dx_grid) % nx
+        fj = ((y - y_min) / dy_grid) % ny
+        i0 = int(math.floor(fi)); j0 = int(math.floor(fj))
+        wi = fi - i0; wj = fj - j0
+        i1 = (i0 + 1) % nx; j1 = (j0 + 1) % ny
+        return (field_2d[i0, j0] * (1 - wi) * (1 - wj) +
+                field_2d[i1, j0] * wi * (1 - wj) +
+                field_2d[i0, j1] * (1 - wi) * wj +
+                field_2d[i1, j1] * wi * wj)
 
     def _interpolated_velocity(ti, x, y):
         vx_2d = vx_all.isel(time=ti).values
         vy_2d = vy_all.isel(time=ti).values
-        interp_vx = RegularGridInterpolator(
-            (x_vals, y_vals), vx_2d, method="linear",
-            bounds_error=False, fill_value=None,
-        )
-        interp_vy = RegularGridInterpolator(
-            (x_vals, y_vals), vy_2d, method="linear",
-            bounds_error=False, fill_value=None,
-        )
-        pt = np.array([[x, y]])
-        return float(interp_vx(pt)[0]), float(interp_vy(pt)[0])
+        return float(_bilinear_periodic(vx_2d, x, y)), float(_bilinear_periodic(vy_2d, x, y))
 
     fwd_x, fwd_y, fwd_t = [x0], [y0], [float(times[t0_idx])]
     cx, cy = x0, y0
     for ti in range(t0_idx, nt - 1):
+        actual_dt = float(times[ti + 1] - times[ti])
         vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
-        cx_new = cx + vx_loc * dt
-        cy_new = cy + vy_loc * dt
-        if not _in_domain(cx_new, cy_new):
-            break
-        cx, cy = cx_new, cy_new
+        cx = x_min + (cx + vx_loc * actual_dt - x_min) % Lx
+        cy = y_min + (cy + vy_loc * actual_dt - y_min) % Ly
         fwd_x.append(cx); fwd_y.append(cy); fwd_t.append(float(times[ti + 1]))
 
     bwd_x, bwd_y, bwd_t = [], [], []
     cx, cy = x0, y0
     for ti in range(t0_idx, 0, -1):
+        actual_dt = float(times[ti] - times[ti - 1])
         vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
-        cx_new = cx - vx_loc * dt
-        cy_new = cy - vy_loc * dt
-        if not _in_domain(cx_new, cy_new):
-            break
-        cx, cy = cx_new, cy_new
+        cx = x_min + (cx - vx_loc * actual_dt - x_min) % Lx
+        cy = y_min + (cy - vy_loc * actual_dt - y_min) % Ly
         bwd_x.append(cx); bwd_y.append(cy); bwd_t.append(float(times[ti - 1]))
 
     bwd_x.reverse(); bwd_y.reverse(); bwd_t.reverse()
@@ -109,11 +109,8 @@ def _trace_v2_fullgrid(ds, x0, y0, t0_idx, dt):
     y_vals = ds["y"].values
     times = ds["time"].values
     nt = len(times)
-    x_min, x_max = float(x_vals[0]), float(x_vals[-1])
-    y_min, y_max = float(y_vals[0]), float(y_vals[-1])
-
-    def _in_domain(x, y):
-        return x_min <= x <= x_max and y_min <= y <= y_max
+    x_min = float(x_vals[0])
+    y_min = float(y_vals[0])
 
     Ex = ds["Ex"].values; Ey = ds["Ey"].values; Ez = ds["Ez"].values
     Bx = ds["Bx"].values; By = ds["By"].values; Bz = ds["Bz"].values
@@ -126,16 +123,20 @@ def _trace_v2_fullgrid(ds, x0, y0, t0_idx, dt):
     grid_x0 = float(x_vals[0])
     grid_y0 = float(y_vals[0])
     gnx, gny = len(x_vals), len(y_vals)
+    Lx = gnx * grid_dx
+    Ly = gny * grid_dy
 
     def _bilinear(field, x, y):
-        fi = max(0.0, min((x - grid_x0) / grid_dx, gnx - 1.0))
-        fj = max(0.0, min((y - grid_y0) / grid_dy, gny - 1.0))
-        i0 = min(int(fi), gnx - 2); j0 = min(int(fj), gny - 2)
+        fi = ((x - grid_x0) / grid_dx) % gnx
+        fj = ((y - grid_y0) / grid_dy) % gny
+        import math
+        i0 = int(math.floor(fi)); j0 = int(math.floor(fj))
         wi = fi - i0; wj = fj - j0
+        i1 = (i0 + 1) % gnx; j1 = (j0 + 1) % gny
         return (field[i0, j0] * (1 - wi) * (1 - wj) +
-                field[i0+1, j0] * wi * (1 - wj) +
-                field[i0, j0+1] * (1 - wi) * wj +
-                field[i0+1, j0+1] * wi * wj)
+                field[i1, j0] * wi * (1 - wj) +
+                field[i0, j1] * (1 - wi) * wj +
+                field[i1, j1] * wi * wj)
 
     def _interpolated_velocity(ti, x, y):
         return float(_bilinear(vx_all[ti], x, y)), float(_bilinear(vy_all[ti], x, y))
@@ -143,23 +144,19 @@ def _trace_v2_fullgrid(ds, x0, y0, t0_idx, dt):
     fwd_x, fwd_y, fwd_t = [x0], [y0], [float(times[t0_idx])]
     cx, cy = x0, y0
     for ti in range(t0_idx, nt - 1):
+        actual_dt = float(times[ti + 1] - times[ti])
         vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
-        cx_new = cx + vx_loc * dt
-        cy_new = cy + vy_loc * dt
-        if not _in_domain(cx_new, cy_new):
-            break
-        cx, cy = cx_new, cy_new
+        cx = x_min + (cx + vx_loc * actual_dt - x_min) % Lx
+        cy = y_min + (cy + vy_loc * actual_dt - y_min) % Ly
         fwd_x.append(cx); fwd_y.append(cy); fwd_t.append(float(times[ti + 1]))
 
     bwd_x, bwd_y, bwd_t = [], [], []
     cx, cy = x0, y0
     for ti in range(t0_idx, 0, -1):
+        actual_dt = float(times[ti] - times[ti - 1])
         vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
-        cx_new = cx - vx_loc * dt
-        cy_new = cy - vy_loc * dt
-        if not _in_domain(cx_new, cy_new):
-            break
-        cx, cy = cx_new, cy_new
+        cx = x_min + (cx - vx_loc * actual_dt - x_min) % Lx
+        cy = y_min + (cy - vy_loc * actual_dt - y_min) % Ly
         bwd_x.append(cx); bwd_y.append(cy); bwd_t.append(float(times[ti - 1]))
 
     bwd_x.reverse(); bwd_y.reverse(); bwd_t.reverse()
@@ -252,3 +249,37 @@ class TestTraceTrajectoryPerformance:
         print(f"{'='*60}")
 
         assert speedup > 2.0, f"Expected >2x speedup on large grid, got {speedup:.1f}x"
+
+    def test_batch_faster_than_sequential(self):
+        """Batch tracing N=50 trajectories should be significantly faster than 50 sequential calls."""
+        N = 50
+        ds = _make_dataset(nx=128, ny=64, nt=200, dt=0.1)
+        x0s = np.linspace(20, 80, N)
+        y0s = np.full(N, 30.0)
+        t0_idx = 100
+
+        # Warm up
+        trace_trajectory(ds, x0s[0], y0s[0], t0_idx, 0.1)
+
+        # Sequential
+        t_start = time.perf_counter()
+        for i in range(N):
+            trace_trajectory(ds, x0s[i], y0s[i], t0_idx, 0.1)
+        t_sequential = time.perf_counter() - t_start
+
+        # Batch
+        t_start = time.perf_counter()
+        trace_trajectories(ds, x0s, y0s, t0_idx)
+        t_batch = time.perf_counter() - t_start
+
+        speedup = t_sequential / t_batch
+
+        print(f"\n{'='*60}")
+        print(f"  Batch vs Sequential: N={N} trajectories")
+        print(f"{'='*60}")
+        print(f"  Sequential (N calls):  {t_sequential*1000:8.1f} ms")
+        print(f"  Batch (1 call):        {t_batch*1000:8.1f} ms")
+        print(f"  Speedup:               {speedup:8.1f}x")
+        print(f"{'='*60}")
+
+        assert speedup >= 3, f"Expected >= 3x speedup, got {speedup:.1f}x"
