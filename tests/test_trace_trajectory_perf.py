@@ -1,12 +1,13 @@
 """
-Performance comparison: old vs new trace_trajectory implementation.
+Performance comparison: three trace_trajectory implementations.
 
-The old implementation creates two RegularGridInterpolator objects per timestep
-and uses xarray indexing in the inner loop. The new implementation uses pure
-numpy with manual bilinear interpolation.
+1. Original: RegularGridInterpolator constructed per timestep + xarray indexing
+2. Full-grid numpy: pre-compute ExB over entire grid, bilinear interp in loop
+3. Lazy local (current): compute ExB only at the 4 surrounding cells per step
 
 Run with:
     python -m pytest tests/test_trace_trajectory_perf.py -v -s
+
 """
 import time
 from typing import Tuple
@@ -30,7 +31,6 @@ def _make_dataset(nx=128, ny=64, nt=200, dx=1.0, dy=1.0, dt=0.1):
     rng = np.random.default_rng(42)
     shape = (nt, nx, ny)
 
-    # Background Bz=1 plus small fluctuations; other components are small
     ds = xr.Dataset(
         {
             "Ex": (("time", "x", "y"), 0.1 * rng.standard_normal(shape)),
@@ -45,19 +45,14 @@ def _make_dataset(nx=128, ny=64, nt=200, dx=1.0, dy=1.0, dt=0.1):
     return ds
 
 
-def _trace_trajectory_old(
-    ds: xr.Dataset,
-    x0: float,
-    y0: float,
-    t0_idx: int,
-    dt: float,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Original implementation using RegularGridInterpolator per timestep."""
+# ---------------------------------------------------------------------------
+# V1: Original (RegularGridInterpolator per timestep + xarray .isel)
+# ---------------------------------------------------------------------------
+def _trace_v1_scipy(ds, x0, y0, t0_idx, dt):
     x_vals = ds["x"].values
     y_vals = ds["y"].values
     times = ds["time"].values
     nt = len(times)
-
     x_min, x_max = float(x_vals[0]), float(x_vals[-1])
     y_min, y_max = float(y_vals[0]), float(y_vals[-1])
 
@@ -89,9 +84,7 @@ def _trace_trajectory_old(
         if not _in_domain(cx_new, cy_new):
             break
         cx, cy = cx_new, cy_new
-        fwd_x.append(cx)
-        fwd_y.append(cy)
-        fwd_t.append(float(times[ti + 1]))
+        fwd_x.append(cx); fwd_y.append(cy); fwd_t.append(float(times[ti + 1]))
 
     bwd_x, bwd_y, bwd_t = [], [], []
     cx, cy = x0, y0
@@ -102,63 +95,160 @@ def _trace_trajectory_old(
         if not _in_domain(cx_new, cy_new):
             break
         cx, cy = cx_new, cy_new
-        bwd_x.append(cx)
-        bwd_y.append(cy)
-        bwd_t.append(float(times[ti - 1]))
+        bwd_x.append(cx); bwd_y.append(cy); bwd_t.append(float(times[ti - 1]))
 
-    bwd_x.reverse()
-    bwd_y.reverse()
-    bwd_t.reverse()
-
+    bwd_x.reverse(); bwd_y.reverse(); bwd_t.reverse()
     return np.array(bwd_x + fwd_x), np.array(bwd_y + fwd_y), np.array(bwd_t + fwd_t)
 
 
-class TestTraceTrajectoryPerformance:
-    """Benchmark old vs new trace_trajectory and verify identical results."""
+# ---------------------------------------------------------------------------
+# V2: Full-grid numpy precompute + bilinear interp
+# ---------------------------------------------------------------------------
+def _trace_v2_fullgrid(ds, x0, y0, t0_idx, dt):
+    x_vals = ds["x"].values
+    y_vals = ds["y"].values
+    times = ds["time"].values
+    nt = len(times)
+    x_min, x_max = float(x_vals[0]), float(x_vals[-1])
+    y_min, y_max = float(y_vals[0]), float(y_vals[-1])
 
-    def test_speedup(self):
+    def _in_domain(x, y):
+        return x_min <= x <= x_max and y_min <= y <= y_max
+
+    Ex = ds["Ex"].values; Ey = ds["Ey"].values; Ez = ds["Ez"].values
+    Bx = ds["Bx"].values; By = ds["By"].values; Bz = ds["Bz"].values
+    B2 = Bx**2 + By**2 + Bz**2
+    vx_all = (Ey * Bz - Ez * By) / B2
+    vy_all = (Ez * Bx - Ex * Bz) / B2
+
+    grid_dx = float(x_vals[1] - x_vals[0])
+    grid_dy = float(y_vals[1] - y_vals[0])
+    grid_x0 = float(x_vals[0])
+    grid_y0 = float(y_vals[0])
+    gnx, gny = len(x_vals), len(y_vals)
+
+    def _bilinear(field, x, y):
+        fi = max(0.0, min((x - grid_x0) / grid_dx, gnx - 1.0))
+        fj = max(0.0, min((y - grid_y0) / grid_dy, gny - 1.0))
+        i0 = min(int(fi), gnx - 2); j0 = min(int(fj), gny - 2)
+        wi = fi - i0; wj = fj - j0
+        return (field[i0, j0] * (1 - wi) * (1 - wj) +
+                field[i0+1, j0] * wi * (1 - wj) +
+                field[i0, j0+1] * (1 - wi) * wj +
+                field[i0+1, j0+1] * wi * wj)
+
+    def _interpolated_velocity(ti, x, y):
+        return float(_bilinear(vx_all[ti], x, y)), float(_bilinear(vy_all[ti], x, y))
+
+    fwd_x, fwd_y, fwd_t = [x0], [y0], [float(times[t0_idx])]
+    cx, cy = x0, y0
+    for ti in range(t0_idx, nt - 1):
+        vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
+        cx_new = cx + vx_loc * dt
+        cy_new = cy + vy_loc * dt
+        if not _in_domain(cx_new, cy_new):
+            break
+        cx, cy = cx_new, cy_new
+        fwd_x.append(cx); fwd_y.append(cy); fwd_t.append(float(times[ti + 1]))
+
+    bwd_x, bwd_y, bwd_t = [], [], []
+    cx, cy = x0, y0
+    for ti in range(t0_idx, 0, -1):
+        vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
+        cx_new = cx - vx_loc * dt
+        cy_new = cy - vy_loc * dt
+        if not _in_domain(cx_new, cy_new):
+            break
+        cx, cy = cx_new, cy_new
+        bwd_x.append(cx); bwd_y.append(cy); bwd_t.append(float(times[ti - 1]))
+
+    bwd_x.reverse(); bwd_y.reverse(); bwd_t.reverse()
+    return np.array(bwd_x + fwd_x), np.array(bwd_y + fwd_y), np.array(bwd_t + fwd_t)
+
+
+# ---------------------------------------------------------------------------
+# V3: Current implementation (lazy local ExB, imported trace_trajectory)
+# ---------------------------------------------------------------------------
+# Already imported as `trace_trajectory`
+
+
+def _time_fn(fn, *args, n_runs=3):
+    """Return median wall-clock time over n_runs."""
+    times = []
+    result = None
+    for _ in range(n_runs):
+        t0 = time.perf_counter()
+        result = fn(*args)
+        times.append(time.perf_counter() - t0)
+    median = sorted(times)[n_runs // 2]
+    return median, result
+
+
+class TestTraceTrajectoryPerformance:
+    """Benchmark three implementations and verify identical results."""
+
+    def test_speedup_small_grid(self):
+        """128x64 grid, 200 timesteps — the loop dominates."""
         ds = _make_dataset(nx=128, ny=64, nt=200, dt=0.1)
         x0, y0, t0_idx, dt = 60.0, 30.0, 100, 0.1
 
-        # Warm up (first call may include import overhead, etc.)
+        # Warm up
         trace_trajectory(ds, x0, y0, t0_idx, dt)
 
-        # --- Time the old implementation ---
-        n_runs = 3
-        old_times = []
-        for _ in range(n_runs):
-            t_start = time.perf_counter()
-            x_old, y_old, t_old = _trace_trajectory_old(ds, x0, y0, t0_idx, dt)
-            old_times.append(time.perf_counter() - t_start)
-        old_median = sorted(old_times)[n_runs // 2]
+        t_v1, (x1, y1, t1) = _time_fn(_trace_v1_scipy, ds, x0, y0, t0_idx, dt)
+        t_v2, (x2, y2, t2) = _time_fn(_trace_v2_fullgrid, ds, x0, y0, t0_idx, dt)
+        t_v3, (x3, y3, t3) = _time_fn(trace_trajectory, ds, x0, y0, t0_idx, dt)
 
-        # --- Time the new implementation ---
-        new_times = []
-        for _ in range(n_runs):
-            t_start = time.perf_counter()
-            x_new, y_new, t_new = trace_trajectory(ds, x0, y0, t0_idx, dt)
-            new_times.append(time.perf_counter() - t_start)
-        new_median = sorted(new_times)[n_runs // 2]
-
-        # --- Verify identical results ---
-        np.testing.assert_allclose(x_new, x_old, atol=1e-12,
-                                   err_msg="x trajectories differ")
-        np.testing.assert_allclose(y_new, y_old, atol=1e-12,
-                                   err_msg="y trajectories differ")
-        np.testing.assert_allclose(t_new, t_old, atol=1e-12,
-                                   err_msg="t trajectories differ")
-
-        speedup = old_median / new_median
+        # All three must produce the same trajectory
+        np.testing.assert_allclose(x3, x1, atol=1e-12)
+        np.testing.assert_allclose(y3, y1, atol=1e-12)
+        np.testing.assert_allclose(t3, t1, atol=1e-12)
+        np.testing.assert_allclose(x3, x2, atol=1e-12)
+        np.testing.assert_allclose(y3, y2, atol=1e-12)
 
         print(f"\n{'='*60}")
-        print(f"  trace_trajectory performance comparison")
-        print(f"  Grid: 128×64, 200 timesteps, start at t0_idx=100")
-        print(f"  Trajectory length: {len(t_new)} points")
+        print(f"  Small grid: 128x64, 200 timesteps")
+        print(f"  Trajectory length: {len(t3)} points")
         print(f"{'='*60}")
-        print(f"  Old (RegularGridInterpolator): {old_median*1000:8.1f} ms")
-        print(f"  New (bilinear numpy):          {new_median*1000:8.1f} ms")
-        print(f"  Speedup:                       {speedup:8.1f}x")
+        print(f"  V1 scipy/xarray:       {t_v1*1000:8.1f} ms")
+        print(f"  V2 full-grid numpy:    {t_v2*1000:8.1f} ms")
+        print(f"  V3 lazy local (curr):  {t_v3*1000:8.1f} ms")
+        print(f"  V1->V3 speedup:        {t_v1/t_v3:8.1f}x")
+        print(f"  V2->V3 speedup:        {t_v2/t_v3:8.1f}x")
         print(f"{'='*60}")
 
-        # The new implementation should be consistently faster
-        assert speedup > 1.2, f"Expected >1.2x speedup, got {speedup:.1f}x"
+        assert t_v3 < t_v1, "V3 should be faster than V1"
+
+    def test_speedup_large_grid(self):
+        """800x200 grid, 500 timesteps — simulates real simulation scale.
+
+        At this size the full-grid ExB precomputation is expensive,
+        so V3 (lazy local) should show a large advantage over V2.
+        """
+        ds = _make_dataset(nx=800, ny=200, nt=500, dt=0.1)
+        x0, y0, t0_idx, dt = 400.0, 100.0, 250, 0.1
+
+        # Warm up
+        trace_trajectory(ds, x0, y0, t0_idx, dt)
+
+        # Skip V1 on the large grid — it's very slow
+        t_v2, (x2, y2, t2) = _time_fn(_trace_v2_fullgrid, ds, x0, y0, t0_idx, dt)
+        t_v3, (x3, y3, t3) = _time_fn(trace_trajectory, ds, x0, y0, t0_idx, dt)
+
+        # Results must match
+        np.testing.assert_allclose(x3, x2, atol=1e-12)
+        np.testing.assert_allclose(y3, y2, atol=1e-12)
+        np.testing.assert_allclose(t3, t2, atol=1e-12)
+
+        speedup = t_v2 / t_v3
+
+        print(f"\n{'='*60}")
+        print(f"  Large grid: 800x200, 500 timesteps")
+        print(f"  Trajectory length: {len(t3)} points")
+        print(f"{'='*60}")
+        print(f"  V2 full-grid numpy:    {t_v2*1000:8.1f} ms")
+        print(f"  V3 lazy local (curr):  {t_v3*1000:8.1f} ms")
+        print(f"  Speedup:               {speedup:8.1f}x")
+        print(f"{'='*60}")
+
+        assert speedup > 2.0, f"Expected >2x speedup on large grid, got {speedup:.1f}x"

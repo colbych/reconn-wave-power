@@ -106,16 +106,13 @@ def trace_trajectory(
     def _in_domain(x: float, y: float) -> bool:
         return x_min <= x <= x_max and y_min <= y <= y_max
 
-    # Pre-compute E×B velocity as pure numpy arrays (nt, nx, ny)
+    # Extract raw field arrays (no ExB computation over the full grid)
     Ex = ds["Ex"].values
     Ey = ds["Ey"].values
     Ez = ds["Ez"].values
     Bx = ds["Bx"].values
     By = ds["By"].values
     Bz = ds["Bz"].values
-    B2 = Bx**2 + By**2 + Bz**2
-    vx_all = (Ey * Bz - Ez * By) / B2
-    vy_all = (Ez * Bx - Ex * Bz) / B2
 
     # Grid spacing for O(1) index lookup
     dx = float(x_vals[1] - x_vals[0])
@@ -125,30 +122,35 @@ def trace_trajectory(
     nx = len(x_vals)
     ny = len(y_vals)
 
-    def _bilinear_interp(field: np.ndarray, x: float, y: float) -> float:
-        """Bilinear interpolation on a regular grid. field is 2D (nx, ny)."""
+    def _interpolated_velocity(ti: int, x: float, y: float) -> Tuple[float, float]:
+        """Compute ExB velocity at (x, y) for timestep ti using only the 4 surrounding cells."""
         fi = (x - x0_grid) / dx
         fj = (y - y0_grid) / dy
-        # Clamp to valid index range
         fi = max(0.0, min(fi, nx - 1.0))
         fj = max(0.0, min(fj, ny - 1.0))
         i0 = min(int(fi), nx - 2)
         j0 = min(int(fj), ny - 2)
         wi = fi - i0
         wj = fj - j0
-        return (
-            field[i0, j0] * (1 - wi) * (1 - wj)
-            + field[i0 + 1, j0] * wi * (1 - wj)
-            + field[i0, j0 + 1] * (1 - wi) * wj
-            + field[i0 + 1, j0 + 1] * wi * wj
-        )
 
-    def _interpolated_velocity(ti: int, x: float, y: float) -> Tuple[float, float]:
-        """Return (vx, vy) at position (x, y) for timestep index ti."""
-        return (
-            float(_bilinear_interp(vx_all[ti], x, y)),
-            float(_bilinear_interp(vy_all[ti], x, y)),
-        )
+        w00 = (1 - wi) * (1 - wj)
+        w10 = wi * (1 - wj)
+        w01 = (1 - wi) * wj
+        w11 = wi * wj
+
+        # Extract the 2x2 patch from each field component
+        sl = (ti, slice(i0, i0 + 2), slice(j0, j0 + 2))
+        ex = Ex[sl]; ey = Ey[sl]; ez = Ez[sl]
+        bx = Bx[sl]; by = By[sl]; bz = Bz[sl]
+
+        # ExB / |B|^2 at the 4 grid points
+        b2 = bx**2 + by**2 + bz**2
+        vx_patch = (ey * bz - ez * by) / b2
+        vy_patch = (ez * bx - ex * bz) / b2
+
+        vx = vx_patch[0, 0] * w00 + vx_patch[1, 0] * w10 + vx_patch[0, 1] * w01 + vx_patch[1, 1] * w11
+        vy = vy_patch[0, 0] * w00 + vy_patch[1, 0] * w10 + vy_patch[0, 1] * w01 + vy_patch[1, 1] * w11
+        return float(vx), float(vy)
 
     # --- Forward integration (t0_idx -> end) ---
     fwd_x, fwd_y, fwd_t = [x0], [y0], [float(times[t0_idx])]
