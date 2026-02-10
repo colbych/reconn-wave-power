@@ -6,7 +6,7 @@ frequency PSDs along those trajectories (plasma rest-frame spectra).
 
 APIs:
 - compute_exb_velocity(ds, time_idx=None) -> vx, vy
-- trace_trajectory(ds, x0, y0, t0_idx, dt) -> x_traj, y_traj, t_traj
+- trace_trajectory(ds, x0, y0, t0_idx) -> x_traj, y_traj, t_traj
 - sample_along_trajectory(ds, field, x_traj, y_traj, t_traj) -> DataArray
 - lagrangian_psd(ds, field, x0, y0, t0_idx, dt, ...) -> (f, Pxx, trajectory)
 """
@@ -66,16 +66,17 @@ def trace_trajectory(
     x0: float,
     y0: float,
     t0_idx: int,
-    dt: float,
+    dt: Optional[float] = None,
+    progress: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Integrate a trajectory through the E×B velocity field.
 
     Steps forward and backward from (x0, y0) at timestep index *t0_idx*
-    using simple Euler stepping at the simulation cadence *dt*.  At each
-    timestep the local E×B velocity is obtained by spatial interpolation
-    (scipy RegularGridInterpolator).  The trajectory is truncated when it
-    exits the simulation domain.
+    using simple Euler stepping.  The step size is derived from the actual
+    spacing of the time coordinate (not from *dt*).  At each timestep the
+    local E×B velocity is obtained by spatial interpolation (bilinear).
+    The trajectory is truncated when it exits the simulation domain.
 
     Parameters
     ----------
@@ -85,8 +86,12 @@ def trace_trajectory(
         Starting position.
     t0_idx : int
         Timestep index of the starting point (index into ds.time).
-    dt : float
-        Time between consecutive timesteps.
+    dt : float, optional
+        Deprecated — ignored by the trajectory integrator.  Kept for
+        backward-compatible call signatures; callers like ``lagrangian_psd``
+        may still pass *dt* for the PSD computation.
+    progress : bool, optional
+        If True, display a tqdm progress bar during integration.
 
     Returns
     -------
@@ -109,12 +114,8 @@ def trace_trajectory(
     # Grab references to the underlying data stores — no copy, works for
     # both numpy-backed and dask-backed arrays.  We use .variable.data so
     # that indexing later bypasses xarray coordinate machinery.
-    _Ex = ds["Ex"].variable.data
-    _Ey = ds["Ey"].variable.data
-    _Ez = ds["Ez"].variable.data
-    _Bx = ds["Bx"].variable.data
-    _By = ds["By"].variable.data
-    _Bz = ds["Bz"].variable.data
+    _fields = [ds[c].variable.data for c in ("Ex", "Ey", "Ez", "Bx", "By", "Bz")]
+    _is_dask = hasattr(_fields[0], "dask")
 
     # Grid spacing for O(1) index lookup
     dx = float(x_vals[1] - x_vals[0])
@@ -124,7 +125,40 @@ def trace_trajectory(
     nx = len(x_vals)
     ny = len(y_vals)
 
-    def _interpolated_velocity(ti: int, x: float, y: float) -> Tuple[float, float]:
+    # Batch-load timesteps to minimize dask scheduler overhead.
+    # For dask-backed data, one dask.compute() call per batch (instead of
+    # per timestep) reduces ~1000 scheduler invocations to ~16.
+    _BATCH = 64
+    _batch_cache: dict = {}
+
+    def _preload_batch(start: int, end: int) -> None:
+        """Load field slices for timesteps [start, end) into _batch_cache."""
+        _batch_cache.clear()
+        end = min(end, nt)
+        if _is_dask:
+            import dask
+            tasks = []
+            for ti in range(start, end):
+                for f in _fields:
+                    tasks.append(f[ti])
+            results = dask.compute(*tasks)
+            for idx, ti in enumerate(range(start, end)):
+                _batch_cache[ti] = results[idx * 6:(idx + 1) * 6]
+        else:
+            for ti in range(start, end):
+                _batch_cache[ti] = tuple(np.asarray(f[ti]) for f in _fields)
+
+    def _get_fields(ti: int, backward: bool = False) -> tuple:
+        if ti not in _batch_cache:
+            if backward:
+                _preload_batch(max(ti - _BATCH + 1, 0), ti + 1)
+            else:
+                _preload_batch(ti, ti + _BATCH)
+        return _batch_cache[ti]
+
+    def _interpolated_velocity(
+        ti: int, x: float, y: float, backward: bool = False,
+    ) -> Tuple[float, float]:
         """Compute ExB velocity at (x, y) for timestep ti using only the 4 surrounding cells."""
         fi = (x - x0_grid) / dx
         fj = (y - y0_grid) / dy
@@ -140,21 +174,20 @@ def trace_trajectory(
         w01 = (1 - wi) * wj
         w11 = wi * wj
 
-        # Extract the 2x2 patch from each field component at this timestep.
-        # Indexing with integers on axis 0 avoids loading the full time slice.
+        ex, ey, ez, bx, by, bz = _get_fields(ti, backward=backward)
         i1, j1 = i0 + 1, j0 + 1
-        ex00 = float(_Ex[ti, i0, j0]); ex10 = float(_Ex[ti, i1, j0])
-        ex01 = float(_Ex[ti, i0, j1]); ex11 = float(_Ex[ti, i1, j1])
-        ey00 = float(_Ey[ti, i0, j0]); ey10 = float(_Ey[ti, i1, j0])
-        ey01 = float(_Ey[ti, i0, j1]); ey11 = float(_Ey[ti, i1, j1])
-        ez00 = float(_Ez[ti, i0, j0]); ez10 = float(_Ez[ti, i1, j0])
-        ez01 = float(_Ez[ti, i0, j1]); ez11 = float(_Ez[ti, i1, j1])
-        bx00 = float(_Bx[ti, i0, j0]); bx10 = float(_Bx[ti, i1, j0])
-        bx01 = float(_Bx[ti, i0, j1]); bx11 = float(_Bx[ti, i1, j1])
-        by00 = float(_By[ti, i0, j0]); by10 = float(_By[ti, i1, j0])
-        by01 = float(_By[ti, i0, j1]); by11 = float(_By[ti, i1, j1])
-        bz00 = float(_Bz[ti, i0, j0]); bz10 = float(_Bz[ti, i1, j0])
-        bz01 = float(_Bz[ti, i0, j1]); bz11 = float(_Bz[ti, i1, j1])
+        ex00 = float(ex[i0, j0]); ex10 = float(ex[i1, j0])
+        ex01 = float(ex[i0, j1]); ex11 = float(ex[i1, j1])
+        ey00 = float(ey[i0, j0]); ey10 = float(ey[i1, j0])
+        ey01 = float(ey[i0, j1]); ey11 = float(ey[i1, j1])
+        ez00 = float(ez[i0, j0]); ez10 = float(ez[i1, j0])
+        ez01 = float(ez[i0, j1]); ez11 = float(ez[i1, j1])
+        bx00 = float(bx[i0, j0]); bx10 = float(bx[i1, j0])
+        bx01 = float(bx[i0, j1]); bx11 = float(bx[i1, j1])
+        by00 = float(by[i0, j0]); by10 = float(by[i1, j0])
+        by01 = float(by[i0, j1]); by11 = float(by[i1, j1])
+        bz00 = float(bz[i0, j0]); bz10 = float(bz[i1, j0])
+        bz01 = float(bz[i0, j1]); bz11 = float(bz[i1, j1])
 
         # ExB / |B|^2 at each of the 4 corners
         b2_00 = bx00*bx00 + by00*by00 + bz00*bz00
@@ -176,13 +209,28 @@ def trace_trajectory(
         vy = vy00*w00 + vy10*w10 + vy01*w01 + vy11*w11
         return vx, vy
 
+    # Optional progress bar
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+        except ImportError:
+            from tqdm import tqdm
+        pbar = tqdm(total=nt - 1, desc="Tracing trajectory", unit="ts")
+    else:
+        pbar = None
+
     # --- Forward integration (t0_idx -> end) ---
+    # Preload first batch covering the forward direction.
+    _preload_batch(t0_idx, t0_idx + _BATCH)
     fwd_x, fwd_y, fwd_t = [x0], [y0], [float(times[t0_idx])]
     cx, cy = x0, y0
     for ti in range(t0_idx, nt - 1):
+        actual_dt = float(times[ti + 1] - times[ti])
         vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
-        cx_new = cx + vx_loc * dt
-        cy_new = cy + vy_loc * dt
+        cx_new = cx + vx_loc * actual_dt
+        cy_new = cy + vy_loc * actual_dt
+        if pbar is not None:
+            pbar.update(1)
         if not _in_domain(cx_new, cy_new):
             break
         cx, cy = cx_new, cy_new
@@ -191,18 +239,26 @@ def trace_trajectory(
         fwd_t.append(float(times[ti + 1]))
 
     # --- Backward integration (t0_idx -> 0) ---
+    # Preload first batch covering the backward direction.
+    _preload_batch(max(t0_idx - _BATCH + 1, 0), t0_idx + 1)
     bwd_x, bwd_y, bwd_t = [], [], []
     cx, cy = x0, y0
     for ti in range(t0_idx, 0, -1):
-        vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy)
-        cx_new = cx - vx_loc * dt
-        cy_new = cy - vy_loc * dt
+        actual_dt = float(times[ti] - times[ti - 1])
+        vx_loc, vy_loc = _interpolated_velocity(ti, cx, cy, backward=True)
+        cx_new = cx - vx_loc * actual_dt
+        cy_new = cy - vy_loc * actual_dt
+        if pbar is not None:
+            pbar.update(1)
         if not _in_domain(cx_new, cy_new):
             break
         cx, cy = cx_new, cy_new
         bwd_x.append(cx)
         bwd_y.append(cy)
         bwd_t.append(float(times[ti - 1]))
+
+    if pbar is not None:
+        pbar.close()
 
     # Reverse backward lists so time is monotonically increasing
     bwd_x.reverse()
@@ -266,7 +322,7 @@ def lagrangian_psd(
     x0: float,
     y0: float,
     t0_idx: int,
-    dt: float,
+    dt: Optional[float] = None,
     method: str = "welch",
     **psd_kwargs,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, np.ndarray]]:
@@ -285,8 +341,9 @@ def lagrangian_psd(
         Starting position for the trajectory.
     t0_idx : int
         Starting timestep index.
-    dt : float
-        Time between consecutive timesteps.
+    dt : float, optional
+        Time spacing used for the PSD computation.  If *None*, inferred
+        from the median spacing of the dataset time coordinate.
     method : str
         "welch" or "fft"; passed to ``compute_psd_time``.
     **psd_kwargs
@@ -301,8 +358,10 @@ def lagrangian_psd(
     trajectory : dict
         ``{"x_traj": ..., "y_traj": ..., "t_traj": ...}``
     """
-    x_traj, y_traj, t_traj = trace_trajectory(ds, x0, y0, t0_idx, dt)
+    x_traj, y_traj, t_traj = trace_trajectory(ds, x0, y0, t0_idx)
     ts = sample_along_trajectory(ds, field, x_traj, y_traj, t_traj)
+    if dt is None:
+        dt = float(np.median(np.diff(ds["time"].values)))
     f, Pxx = compute_psd_time(ts, dt=dt, method=method, **psd_kwargs)
     trajectory = {"x_traj": x_traj, "y_traj": y_traj, "t_traj": t_traj}
     return f, Pxx, trajectory

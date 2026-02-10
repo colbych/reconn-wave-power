@@ -89,6 +89,47 @@ class TestTraceTrajectory:
         expected_x = x0 + vx_expected * (t_traj - t0)
         np.testing.assert_allclose(x_traj, expected_x, atol=1e-10)
 
+    def test_dt_mismatch_uses_actual_time_spacing(self):
+        """Trajectory should use actual time-coordinate spacing, not a user-supplied dt.
+
+        Reproduces the real-data bug: output cadence (spacing=2.0) differs
+        from simulation internal dt (0.05).  The Euler step must use the
+        output cadence, otherwise the displacement is ~40x too small.
+        """
+        Bz0, Ey0 = 1.0, 1.0
+        vx_expected = Ey0 / Bz0  # = 1.0
+
+        nx, ny = 256, 16
+        # Output cadence of 2.0 — completely different from internal dt
+        time_coords = np.arange(0, 20, 2.0)  # [0, 2, 4, ..., 18]
+        nt = len(time_coords)
+
+        x = np.arange(nx, dtype=float)
+        y = np.arange(ny, dtype=float)
+        zeros = np.zeros((nt, nx, ny))
+
+        ds = xr.Dataset(
+            {
+                "Ex": (("time", "x", "y"), zeros.copy()),
+                "Ey": (("time", "x", "y"), np.full((nt, nx, ny), Ey0)),
+                "Ez": (("time", "x", "y"), zeros.copy()),
+                "Bx": (("time", "x", "y"), zeros.copy()),
+                "By": (("time", "x", "y"), zeros.copy()),
+                "Bz": (("time", "x", "y"), np.full((nt, nx, ny), Bz0)),
+            },
+            coords={"time": time_coords, "x": x, "y": y},
+        )
+
+        x0, y0 = 100.0, 5.0
+        t0_idx = 0
+
+        # Pass a wrong dt (simulation internal timestep) — should be ignored
+        x_traj, y_traj, t_traj = trace_trajectory(ds, x0, y0, t0_idx, dt=0.05)
+
+        # x should advance by vx_expected * elapsed_time
+        expected_x = x0 + vx_expected * (t_traj - t_traj[0])
+        np.testing.assert_allclose(x_traj, expected_x, atol=1e-10)
+
     def test_stops_at_boundary(self):
         """Trajectory should stop when it exits the domain."""
         ds = _uniform_eb_dataset(nx=16, nt=100, dx=1.0, dt=0.1, Bz0=1.0, Ey0=2.0)
