@@ -8,4 +8,5 @@ __all__ = [
     "plotting",
     "figures_pipeline",
     "utils",
+    "lagrangian",
 ]
