@@ -106,13 +106,15 @@ def trace_trajectory(
     def _in_domain(x: float, y: float) -> bool:
         return x_min <= x <= x_max and y_min <= y <= y_max
 
-    # Extract raw field arrays (no ExB computation over the full grid)
-    Ex = ds["Ex"].values
-    Ey = ds["Ey"].values
-    Ez = ds["Ez"].values
-    Bx = ds["Bx"].values
-    By = ds["By"].values
-    Bz = ds["Bz"].values
+    # Grab references to the underlying data stores — no copy, works for
+    # both numpy-backed and dask-backed arrays.  We use .variable.data so
+    # that indexing later bypasses xarray coordinate machinery.
+    _Ex = ds["Ex"].variable.data
+    _Ey = ds["Ey"].variable.data
+    _Ez = ds["Ez"].variable.data
+    _Bx = ds["Bx"].variable.data
+    _By = ds["By"].variable.data
+    _Bz = ds["Bz"].variable.data
 
     # Grid spacing for O(1) index lookup
     dx = float(x_vals[1] - x_vals[0])
@@ -138,19 +140,41 @@ def trace_trajectory(
         w01 = (1 - wi) * wj
         w11 = wi * wj
 
-        # Extract the 2x2 patch from each field component
-        sl = (ti, slice(i0, i0 + 2), slice(j0, j0 + 2))
-        ex = Ex[sl]; ey = Ey[sl]; ez = Ez[sl]
-        bx = Bx[sl]; by = By[sl]; bz = Bz[sl]
+        # Extract the 2x2 patch from each field component at this timestep.
+        # Indexing with integers on axis 0 avoids loading the full time slice.
+        i1, j1 = i0 + 1, j0 + 1
+        ex00 = float(_Ex[ti, i0, j0]); ex10 = float(_Ex[ti, i1, j0])
+        ex01 = float(_Ex[ti, i0, j1]); ex11 = float(_Ex[ti, i1, j1])
+        ey00 = float(_Ey[ti, i0, j0]); ey10 = float(_Ey[ti, i1, j0])
+        ey01 = float(_Ey[ti, i0, j1]); ey11 = float(_Ey[ti, i1, j1])
+        ez00 = float(_Ez[ti, i0, j0]); ez10 = float(_Ez[ti, i1, j0])
+        ez01 = float(_Ez[ti, i0, j1]); ez11 = float(_Ez[ti, i1, j1])
+        bx00 = float(_Bx[ti, i0, j0]); bx10 = float(_Bx[ti, i1, j0])
+        bx01 = float(_Bx[ti, i0, j1]); bx11 = float(_Bx[ti, i1, j1])
+        by00 = float(_By[ti, i0, j0]); by10 = float(_By[ti, i1, j0])
+        by01 = float(_By[ti, i0, j1]); by11 = float(_By[ti, i1, j1])
+        bz00 = float(_Bz[ti, i0, j0]); bz10 = float(_Bz[ti, i1, j0])
+        bz01 = float(_Bz[ti, i0, j1]); bz11 = float(_Bz[ti, i1, j1])
 
-        # ExB / |B|^2 at the 4 grid points
-        b2 = bx**2 + by**2 + bz**2
-        vx_patch = (ey * bz - ez * by) / b2
-        vy_patch = (ez * bx - ex * bz) / b2
+        # ExB / |B|^2 at each of the 4 corners
+        b2_00 = bx00*bx00 + by00*by00 + bz00*bz00
+        b2_10 = bx10*bx10 + by10*by10 + bz10*bz10
+        b2_01 = bx01*bx01 + by01*by01 + bz01*bz01
+        b2_11 = bx11*bx11 + by11*by11 + bz11*bz11
 
-        vx = vx_patch[0, 0] * w00 + vx_patch[1, 0] * w10 + vx_patch[0, 1] * w01 + vx_patch[1, 1] * w11
-        vy = vy_patch[0, 0] * w00 + vy_patch[1, 0] * w10 + vy_patch[0, 1] * w01 + vy_patch[1, 1] * w11
-        return float(vx), float(vy)
+        vx00 = (ey00*bz00 - ez00*by00) / b2_00
+        vx10 = (ey10*bz10 - ez10*by10) / b2_10
+        vx01 = (ey01*bz01 - ez01*by01) / b2_01
+        vx11 = (ey11*bz11 - ez11*by11) / b2_11
+
+        vy00 = (ez00*bx00 - ex00*bz00) / b2_00
+        vy10 = (ez10*bx10 - ex10*bz10) / b2_10
+        vy01 = (ez01*bx01 - ex01*bz01) / b2_01
+        vy11 = (ez11*bx11 - ex11*bz11) / b2_11
+
+        vx = vx00*w00 + vx10*w10 + vx01*w01 + vx11*w11
+        vy = vy00*w00 + vy10*w10 + vy01*w01 + vy11*w11
+        return vx, vy
 
     # --- Forward integration (t0_idx -> end) ---
     fwd_x, fwd_y, fwd_t = [x0], [y0], [float(times[t0_idx])]
