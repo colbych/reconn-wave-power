@@ -390,11 +390,29 @@ def sample_along_trajectory(
     t_indices = np.clip(t_indices, 0, len(t_vals) - 1)
 
     field_data = da.variable.data
+    _is_dask = hasattr(field_data, "dask")
+    _BATCH = 64
+    _batch_cache: dict = {}
+
+    def _preload_field_batch(start: int, end: int) -> None:
+        _batch_cache.clear()
+        end = min(end, len(t_vals))
+        if _is_dask:
+            import dask
+            results = dask.compute(*[field_data[ti] for ti in range(start, end)])
+            for idx, ti in enumerate(range(start, end)):
+                _batch_cache[ti] = results[idx]
+        else:
+            for ti in range(start, end):
+                _batch_cache[ti] = np.asarray(field_data[ti])
+
     values = np.empty(len(t_traj))
 
     for k in range(len(t_traj)):
         ti = t_indices[k]
-        field_2d = np.asarray(field_data[ti])
+        if ti not in _batch_cache:
+            _preload_field_batch(ti, ti + _BATCH)
+        field_2d = _batch_cache[ti]
         fx = np.array([(x_traj[k] - x0_grid) / dx_grid])
         fy = np.array([(y_traj[k] - y0_grid) / dy_grid])
         values[k] = _bilinear_interp_batch(field_2d, fx, fy, nx, ny)[0]
@@ -508,13 +526,32 @@ def sample_along_trajectories(
     t_indices = np.clip(t_indices, 0, len(t_vals) - 1)
 
     field_data = da.variable.data
+    _is_dask = hasattr(field_data, "dask")
+    _BATCH = 64
+
+    # Batch-load timesteps to avoid one-at-a-time dask computes
+    _batch_cache: dict = {}
+
+    def _preload_field_batch(start: int, end: int) -> None:
+        _batch_cache.clear()
+        end = min(end, len(t_vals))
+        if _is_dask:
+            import dask
+            results = dask.compute(*[field_data[ti] for ti in range(start, end)])
+            for idx, ti in enumerate(range(start, end)):
+                _batch_cache[ti] = results[idx]
+        else:
+            for ti in range(start, end):
+                _batch_cache[ti] = np.asarray(field_data[ti])
 
     for col in range(nt):
         active = active_mask[:, col]
         if not active.any():
             continue
         ti = t_indices[col]
-        field_2d = np.asarray(field_data[ti])
+        if ti not in _batch_cache:
+            _preload_field_batch(ti, ti + _BATCH)
+        field_2d = _batch_cache[ti]
         fx = (x_traj[active, col] - x0_grid) / dx_grid
         fy = (y_traj[active, col] - y0_grid) / dy_grid
         out[active, col] = _bilinear_interp_batch(field_2d, fx, fy, nx, ny)
