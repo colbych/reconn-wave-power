@@ -171,12 +171,22 @@ def main():
         psi_frames = cumulative_trapezoid(bx_frames, y_coords, axis=2, initial=0)
         print(f"psi_frames: {psi_frames.nbytes / 1e6:.1f} MB")
 
+        # Determine movie writer and file extension
+        from matplotlib.animation import FFMpegWriter
+        if FFMpegWriter.isAvailable():
+            movie_writer = "ffmpeg"
+            movie_ext = ".mp4"
+        else:
+            print("WARNING: ffmpeg not found; falling back to Pillow (.gif)")
+            movie_writer = "pillow"
+            movie_ext = ".gif"
+
         # Generate movies
         print("\nGenerating movies...")
         for traj_idx in range(N_total):
             x0 = x0s[traj_idx]
             y0 = y0s[traj_idx]
-            fname = MOVIE_DIR / f"trajectory_{traj_idx:02d}_x0_{x0:.1f}_y0_{y0:.1f}.mp4"
+            fname = MOVIE_DIR / f"trajectory_{traj_idx:02d}_x0_{x0:.1f}_y0_{y0:.1f}{movie_ext}"
 
             fig, ax = plt.subplots(figsize=(12, 4))
             im = ax.pcolormesh(
@@ -201,8 +211,7 @@ def main():
 
             def update(frame_idx, xt=xt, yt=yt, contour_holder=contour_holder):
                 im.set_array(bz_frames[frame_idx].T.ravel())
-                for c in contour_holder[0].collections:
-                    c.remove()
+                contour_holder[0].remove()
                 contour_holder[0] = ax.contour(
                     ds.x.values, ds.y.values, psi_frames[frame_idx].T,
                     levels=N_CONTOURS, colors="k", linewidths=0.5,
@@ -221,7 +230,7 @@ def main():
 
             anim = FuncAnimation(fig, update, frames=n_frames, interval=50, blit=False)
             plt.close(fig)
-            anim.save(str(fname), writer="ffmpeg", fps=MOVIE_FPS, dpi=MOVIE_DPI)
+            anim.save(str(fname), writer=movie_writer, fps=MOVIE_FPS, dpi=MOVIE_DPI)
             print(f"  [{traj_idx + 1}/{N_total}] Saved: {fname}")
 
         print("All movies saved.")
