@@ -21,8 +21,6 @@ import xarray as xr
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from pathlib import Path
-from scipy.integrate import cumulative_trapezoid
-
 from reconn_wave_power.io import read_simulation
 from reconn_wave_power.spectrum import compute_psd_time
 
@@ -149,6 +147,7 @@ def main():
         BATCH_SIZE = 64
         bz_frames = np.empty((n_frames, len(ds.x), len(ds.y)), dtype=np.float32)
         bx_frames = np.empty((n_frames, len(ds.x), len(ds.y)), dtype=np.float32)
+        by_frames = np.empty((n_frames, len(ds.x), len(ds.y)), dtype=np.float32)
 
         for batch_start in range(0, n_frames, BATCH_SIZE):
             batch_end = min(batch_start + BATCH_SIZE, n_frames)
@@ -156,19 +155,30 @@ def main():
                           for i in range(batch_start, batch_end)]
             delayed_bx = [ds["Bx"].isel(time=int(frame_indices[i])).data
                           for i in range(batch_start, batch_end)]
-            results = dask.compute(*(delayed_bz + delayed_bx))
+            delayed_by = [ds["By"].isel(time=int(frame_indices[i])).data
+                          for i in range(batch_start, batch_end)]
+            results = dask.compute(*(delayed_bz + delayed_bx + delayed_by))
             n_batch = batch_end - batch_start
             for j in range(n_batch):
                 bz_frames[batch_start + j] = results[j]
                 bx_frames[batch_start + j] = results[n_batch + j]
+                by_frames[batch_start + j] = results[2 * n_batch + j]
             print(f"  Loaded frames {batch_start}-{batch_end - 1} / {n_frames - 1}")
 
         print(f"bz_frames: {bz_frames.nbytes / 1e6:.1f} MB")
         print(f"bx_frames: {bx_frames.nbytes / 1e6:.1f} MB")
+        print(f"by_frames: {by_frames.nbytes / 1e6:.1f} MB")
 
-        # Compute flux function
+        # Compute flux function using two-step method (Bx and By)
+        x_coords = ds.x.values
         y_coords = ds.y.values
-        psi_frames = cumulative_trapezoid(bx_frames, y_coords, axis=2, initial=0)
+        dx = x_coords[1] - x_coords[0]
+        dy = y_coords[1] - y_coords[0]
+        psi_frames = np.zeros_like(bx_frames)
+        # Step 1: boundary at x=0 — integrate Bx along y
+        psi_frames[:, 0, 1:] = np.cumsum(bx_frames[:, 0, 1:], axis=-1) * dy
+        # Step 2: interior — extend using -∂ψ/∂x = By
+        psi_frames[:, 1:, :] = psi_frames[:, 0:1, :] - np.cumsum(by_frames[:, 1:, :], axis=-2) * dx
         print(f"psi_frames: {psi_frames.nbytes / 1e6:.1f} MB")
 
         # Determine movie writer and file extension
