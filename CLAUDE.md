@@ -15,6 +15,9 @@ python -m pip install -e .
 # Install with optional dask support
 python -m pip install -e ".[dask]"
 
+# Install with bundled ffmpeg for movie generation
+python -m pip install -e ".[movies]"
+
 # Run all tests (with conda env active)
 python -m pytest tests/
 
@@ -73,6 +76,7 @@ Located in `notebooks/`:
 - **05_lagrangian_alfven_validation.ipynb** — End-to-end validation of Lagrangian tracer with synthetic data
 - **06_lagrangian_batch_analysis.ipynb** — Batch trajectory tracing on a grid of starting positions, saves results to NetCDF
 - **07_lagrangian_movies_and_psds.ipynb** — Per-trajectory movies (Bz + field line contours + particle track), truncated PSDs, and Poynting vector / energy density PSDs
+- **08_unit_conversion.ipynb** — Converts truncated PSD results from code units to SI units for user-specified B₀ and n₀, saves SI dataset to NetCDF, generates per-trajectory PSD plots with physical axes (Hz, T²/Hz, etc.)
 
 ## Scripts
 
@@ -107,4 +111,4 @@ Located in `scripts/`. Standalone versions of notebooks 06 and 07 for running on
 ## Dependencies
 
 Core: numpy, scipy, xarray, matplotlib, pandas, tqdm, dhybridrpy
-Optional: dask (lazy array loading)
+Optional: dask (lazy array loading), imageio-ffmpeg (bundled ffmpeg for movie generation)
