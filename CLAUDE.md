@@ -84,7 +84,7 @@ Located in `scripts/`. Standalone versions of notebooks 06 and 07 for running on
   python scripts/run_batch_analysis.py config.json
   ```
 
-  Config keys: `input_file`, `output_folder`, `save_dir` (default `"."`), `save_name` (default `"lagrangian_batch"`), `field` (default `"Bz"`), `t0_idx` (default `0`), `n_lines` (default `3`), `n_per_line` (default `20`), `psd_method` (default `"fft"`)
+  Config keys: `input_file`, `output_folder`, `save_dir` (default `"."`), `save_name` (default `"lagrangian_batch"`), `field` (default `"Bz"`), `t0_idx` (default `0`), `n_lines` (default `3`), `n_per_line` (default `20`), `psd_method` (default `"fft"`), `positions` (optional — overrides `n_lines`/`n_per_line`; accepts a list of `[x, y]` pairs or a dict with `"x"`/`"y"` range specs like `[start, stop, step]` or `[start, stop, n, "linspace"]`)
 
 - **run_truncated_psds.py** — Truncated PSD & movie pipeline (from notebook 07). Loads batch NetCDF from script 06, optionally truncates trajectories at user-specified end times (via a separate JSON file mapping trajectory index to raw end time), optionally generates per-trajectory MP4 movies, computes PSDs for 6 field components + 5 derived quantities (Sx, Sy, Sz, uE, uB), saves to NetCDF, and generates 3-panel PSD plots.
 

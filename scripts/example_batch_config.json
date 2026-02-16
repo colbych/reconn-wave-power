@@ -7,5 +7,9 @@
   "t0_idx": 0,
   "n_lines": 3,
   "n_per_line": 20,
-  "psd_method": "fft"
+  "psd_method": "fft",
+
+  "_positions_usage": "Optional: set 'positions' instead of n_lines/n_per_line. Examples below.",
+  "_positions_explicit": "positions: [[100.0, 50.0], [200.0, 75.0], [300.0, 100.0]]",
+  "_positions_range": "positions: {x: [100, 600, 100], y: [0, 200, 10, 'linspace']}"
 }
