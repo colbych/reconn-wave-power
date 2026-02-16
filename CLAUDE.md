@@ -72,7 +72,29 @@ Located in `notebooks/`:
 - **04_lagrangian_spectra.ipynb** — Lagrangian vs Eulerian frequency PSDs
 - **05_lagrangian_alfven_validation.ipynb** — End-to-end validation of Lagrangian tracer with synthetic data
 - **06_lagrangian_batch_analysis.ipynb** — Batch trajectory tracing on a grid of starting positions, saves results to NetCDF
-- **07_lagrangian_movies_and_psds.ipynb** — Per-trajectory movies (Bz + field line contours + particle track) and truncated PSDs
+- **07_lagrangian_movies_and_psds.ipynb** — Per-trajectory movies (Bz + field line contours + particle track), truncated PSDs, and Poynting vector / energy density PSDs
+
+## Scripts
+
+Located in `scripts/`. Standalone versions of notebooks 06 and 07 for running on remote/headless machines. Both use `matplotlib.use("Agg")` for non-interactive rendering and accept a single CLI argument: path to a JSON config file.
+
+- **run_batch_analysis.py** — Batch Lagrangian analysis (from notebook 06). Loads simulation, builds starting position grid, traces trajectories, samples all 6 field components, computes PSDs, saves to NetCDF, and exports diagnostic plots as PNGs.
+
+  ```bash
+  python scripts/run_batch_analysis.py config.json
+  ```
+
+  Config keys: `input_file`, `output_folder`, `save_dir` (default `"."`), `save_name` (default `"lagrangian_batch"`), `field` (default `"Bz"`), `t0_idx` (default `0`), `n_lines` (default `3`), `n_per_line` (default `20`), `psd_method` (default `"fft"`)
+
+- **run_truncated_psds.py** — Truncated PSD & movie pipeline (from notebook 07). Loads batch NetCDF from script 06, optionally truncates trajectories at user-specified end times (via a separate JSON file mapping trajectory index to raw end time), optionally generates per-trajectory MP4 movies, computes PSDs for 6 field components + 5 derived quantities (Sx, Sy, Sz, uE, uB), saves to NetCDF, and generates 3-panel PSD plots.
+
+  ```bash
+  python scripts/run_truncated_psds.py config.json
+  ```
+
+  Config keys: `input_file`, `output_folder`, `batch_file`, `end_times_file` (default `null` — no truncation), `save_dir`, `save_name` (default `"lagrangian_batch_truncated"`), `psd_dir` (default `"psd_plots"`), `psd_method` (default `"fft"`), `make_movies` (default `false`), `movie_dir`, `frame_stride`, `tail_len`, `movie_fps`, `movie_dpi`, `n_contours`, `bz_min`, `bz_max`
+
+- **example_batch_config.json** / **example_psd_config.json** — Example config files with all keys and defaults
 
 ## Key Conventions
 
