@@ -106,5 +106,5 @@ Located in `scripts/`. Standalone versions of notebooks 06 and 07 for running on
 
 ## Dependencies
 
-Core: numpy, scipy, xarray, matplotlib, pandas, dhybridrpy
-Optional: dask (lazy array loading), tqdm (progress bars)
+Core: numpy, scipy, xarray, matplotlib, pandas, tqdm, dhybridrpy
+Optional: dask (lazy array loading)

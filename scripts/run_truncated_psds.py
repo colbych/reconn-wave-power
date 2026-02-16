@@ -93,8 +93,6 @@ def main():
     y0s = ds_batch["y0"].values
     N_total = len(x0s)
     dt = ds_batch.attrs["dt"]
-    n_lines = ds_batch.attrs["n_lines"]
-    n_per_line = ds_batch.attrs["n_per_line"]
 
     print(f"Trajectories: {N_total}, Timesteps: {len(t_traj)}, dt: {dt}")
 

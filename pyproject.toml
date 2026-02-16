@@ -10,6 +10,7 @@ dependencies = [
   "dask>=2022.2 ; extra == 'dask'",
   "matplotlib>=3.5",
   "pandas>=1.4",
+  "tqdm>=4.60",
   "dhybridrpy"
 ]
 [build-system]
