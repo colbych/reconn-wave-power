@@ -76,7 +76,7 @@ Located in `notebooks/`:
 - **05_lagrangian_alfven_validation.ipynb** — End-to-end validation of Lagrangian tracer with synthetic data
 - **06_lagrangian_batch_analysis.ipynb** — Batch trajectory tracing on a grid of starting positions, saves results to NetCDF
 - **07_lagrangian_movies_and_psds.ipynb** — Per-trajectory movies (Bz + field line contours + particle track), truncated PSDs, and Poynting vector / energy density PSDs
-- **08_unit_conversion.ipynb** — Converts truncated PSD results from code units to SI units for user-specified B₀ and n₀, saves SI dataset to NetCDF, generates per-trajectory PSD plots with physical axes (Hz, T²/Hz, etc.)
+- **08_unit_conversion.ipynb** — Converts truncated PSD results from code units to CGS (Gaussian) units for user-specified B₀ (G) and n₀ (cm⁻³), saves CGS dataset to NetCDF, generates per-trajectory PSD plots with physical axes (Hz, G²/Hz, etc.)
 
 ## Scripts
 
