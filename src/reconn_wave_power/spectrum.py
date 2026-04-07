@@ -184,3 +184,69 @@ def compute_komega_2d(
     P = np.abs(F2_shift) ** 2 / (ns * nt)
 
     return k_rad, omega, P
+
+
+def compute_psd_map(
+    da: xr.DataArray,
+    dt: float,
+    method: str = "welch",
+    nperseg: Optional[int] = None,
+    window: str = "hann",
+    detrend: bool = True,
+) -> xr.DataArray:
+    """Compute a per-pixel frequency PSD over a 2-D spatial subregion.
+
+    For every (x, y) point in *da*, the time-series is extracted and a
+    frequency PSD is computed, returning a 2-D spatial map of spectra.
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Must have dimensions ``("time", "x", "y")``.
+    dt : float
+        Temporal spacing between samples.
+    method : str
+        ``"welch"`` or ``"fft"``; forwarded to :func:`compute_psd_time`.
+    nperseg : int, optional
+        Welch segment length; ignored for ``"fft"``.
+    window : str
+        Window function name (e.g. ``"hann"``).
+    detrend : bool
+        If True, subtract the mean along the time axis before computing.
+
+    Returns
+    -------
+    xr.DataArray
+        Dimensions ``("x", "y", "frequency")``.  Each pixel contains the PSD
+        of the corresponding time series.  Coordinates ``x``, ``y`` are
+        inherited from *da*; ``frequency`` is in Hz.
+    """
+    for dim in ("time", "x", "y"):
+        if dim not in da.dims:
+            raise ValueError(
+                f"DataArray must have dim '{dim}', got dims {tuple(da.dims)}"
+            )
+
+    f, Pxx = compute_psd_time(
+        da,
+        dt=dt,
+        method=method,
+        nperseg=nperseg,
+        window=window,
+        detrend=detrend,
+        axis="time",
+    )
+    # compute_psd_time returns Pxx with shape (n_freq, nx, ny)
+    # (time axis replaced by frequency axis at position 0).
+    # Move frequency to the last axis → (nx, ny, n_freq).
+    pxx_map = np.moveaxis(Pxx, 0, -1)
+
+    return xr.DataArray(
+        pxx_map,
+        dims=("x", "y", "frequency"),
+        coords={
+            "x": da.coords["x"],
+            "y": da.coords["y"],
+            "frequency": f,
+        },
+    )

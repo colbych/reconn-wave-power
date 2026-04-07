@@ -8,9 +8,11 @@ dependencies = [
   "scipy>=1.9",
   "xarray>=2022.3",
   "dask>=2022.2 ; extra == 'dask'",
+  "imageio-ffmpeg>=0.4 ; extra == 'movies'",
   "matplotlib>=3.5",
   "pandas>=1.4",
   "tqdm>=4.60",
+  "h5py>=3.0",
   "dhybridrpy"
 ]
 [build-system]
