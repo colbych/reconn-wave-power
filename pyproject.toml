@@ -13,6 +13,7 @@ dependencies = [
   "pandas>=1.4",
   "tqdm>=4.60",
   "h5py>=3.0",
+  "h5netcdf>=1.0",
   "dhybridrpy"
 ]
 [build-system]

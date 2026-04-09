@@ -4,10 +4,10 @@ Subregion PSD — local save with descriptive filename
 Edit the USER SETTINGS block below, then run:
     python scripts/subregion_psd_local.py
 
-Output is saved to SAVE_DIR as a NetCDF file whose name encodes the
+Output is saved to SAVE_DIR as an HDF5 file whose name encodes the
 subregion bounds, timestep range, and PSD method so it is self-describing,
 e.g.:
-    psd_fft_x8000-9000_y2500-3500_t0-500.nc
+    psd_fft_x8000-9000_y2500-3500_t0-500.h5
 """
 import numpy as np
 import xarray as xr
@@ -30,7 +30,7 @@ Y_RANGE = (2500, 3500)   # physical y coords (y_min, y_max)
 # Set to None to load all available timesteps, or e.g. list(range(0, 200))
 TIMESTEPS = None
 
-# Where to write the output NetCDF (script directory by default)
+# Where to write the output HDF5 file (script directory by default)
 SAVE_DIR = Path(__file__).parent
 
 # =============================================================================
@@ -49,7 +49,7 @@ def make_filename(x_range, y_range, timesteps):
         t_str = "tAll"
     else:
         t_str = f"t{timesteps[0]}-{timesteps[-1]}"
-    return f"psd_{PSD_METHOD}_{x_str}_{y_str}_{t_str}.nc"
+    return f"psd_{PSD_METHOD}_{x_str}_{y_str}_{t_str}.h5"
 
 
 def main():
@@ -117,10 +117,10 @@ def main():
     fname = make_filename(X_RANGE, Y_RANGE, TIMESTEPS if TIMESTEPS is not None else [t0, t1])
     out_path = SAVE_DIR / fname
     print(f"\nSaving → {out_path}")
-    ds_out.to_netcdf(out_path, engine="netcdf4")
+    ds_out.to_netcdf(out_path, engine="h5netcdf")
 
     # Verify
-    ds_check = xr.open_dataset(out_path)
+    ds_check = xr.open_dataset(out_path, engine="h5netcdf")
     print(f"Saved: {dict(ds_check.sizes)}")
     ds_check.close()
     print("\nDone.")
