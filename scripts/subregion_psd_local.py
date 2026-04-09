@@ -104,12 +104,12 @@ def main():
     ds_out.attrs = {
         "input_file":    INPUT_FILE,
         "output_folder": OUTPUT_DIR,
-        "x_range":       list(X_RANGE),
-        "y_range":       list(Y_RANGE),
-        "t_range":       [t0, t1],
+        "x_range":       f"{X_RANGE[0]},{X_RANGE[1]}",
+        "y_range":       f"{Y_RANGE[0]},{Y_RANGE[1]}",
+        "t_range":       f"{t0},{t1}",
         "psd_method":    PSD_METHOD,
         "dt":            dt,
-        "components":    COMPONENTS,
+        "components":    ",".join(COMPONENTS),
     }
 
     # --- Save ---
@@ -117,7 +117,7 @@ def main():
     fname = make_filename(X_RANGE, Y_RANGE, TIMESTEPS if TIMESTEPS is not None else [t0, t1])
     out_path = SAVE_DIR / fname
     print(f"\nSaving → {out_path}")
-    ds_out.to_netcdf(out_path)
+    ds_out.to_netcdf(out_path, engine="netcdf4")
 
     # Verify
     ds_check = xr.open_dataset(out_path)
