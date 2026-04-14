@@ -76,10 +76,12 @@ def main():
     )
     print(ds)
 
-    dt = ds.attrs.get("dt", float(ds.time[1] - ds.time[0]))
+    # dt_output = dt * ndump: time between output snapshots, used for FFT freq axis
+    dt_output = ds.attrs.get("dt_output", float(ds.time[1] - ds.time[0]))
     t0 = int(ds.time[0].values) if TIMESTEPS is None else TIMESTEPS[0]
     t1 = int(ds.time[-1].values) if TIMESTEPS is None else TIMESTEPS[-1]
-    print(f"\ndt = {dt}  |  grid: {len(ds.x)} x {len(ds.y)}  |  timesteps: {len(ds.time)}")
+    print(f"\ndt_output = {dt_output}  (dt={ds.attrs.get('dt','?')}, ndump={ds.attrs.get('ndump','?')})")
+    print(f"grid: {len(ds.x)} x {len(ds.y)}  |  timesteps: {len(ds.time)}")
 
     # --- Compute per-pixel PSDs ---
     psd_vars = {}
@@ -89,7 +91,7 @@ def main():
         print(f"Computing PSD map: {comp}...")
         psd_da = compute_psd_map(
             ds[comp],
-            dt=dt,
+            dt=dt_output,
             method=PSD_METHOD,
             detrend=True,
         )
@@ -108,7 +110,9 @@ def main():
         "y_range":       f"{Y_RANGE[0]},{Y_RANGE[1]}",
         "t_range":       f"{t0},{t1}",
         "psd_method":    PSD_METHOD,
-        "dt":            dt,
+        "dt":            ds.attrs.get("dt", "unknown"),
+        "ndump":         ds.attrs.get("ndump", "unknown"),
+        "dt_output":     dt_output,
         "components":    ",".join(COMPONENTS),
     }
 

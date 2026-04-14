@@ -236,12 +236,33 @@ def read_simulation(
     for comp, da in var_arrays.items():
         ds[comp] = da
 
-    # attach sampling attrs if available
+    _attach_sim_attrs(ds, dpy)
+    return ds
+
+
+def _attach_sim_attrs(ds: xr.Dataset, dpy) -> None:
+    """Attach dt, ndump, dt_output, and grid spacing attrs from dpy.inputs.
+
+    dt_output = dt * ndump is the time between consecutive output snapshots
+    and should be used as the sample spacing when computing FFT/PSD frequency
+    axes.  dt is the underlying simulation timestep and is retained for
+    reference.
+    """
     try:
-        if "time" in dpy.inputs and "dt" in dpy.inputs["time"]:
-            ds.attrs["dt"] = float(dpy.inputs["time"]["dt"])
+        dt = float(dpy.inputs["time"]["dt"])
+        ds.attrs["dt"] = dt
     except Exception:
-        pass
+        dt = None
+
+    try:
+        ndump = int(dpy.inputs["global_output"]["ndump"])
+        ds.attrs["ndump"] = ndump
+    except Exception:
+        ndump = None
+
+    if dt is not None and ndump is not None:
+        ds.attrs["dt_output"] = dt * ndump
+
     try:
         grid = dpy.inputs.get("grid", {})
         for k in ("dx", "dy", "dz"):
@@ -249,8 +270,6 @@ def read_simulation(
                 ds.attrs[k] = float(grid[k])
     except Exception:
         pass
-
-    return ds
 
 
 # ---------------------------------------------------------------------------
@@ -498,18 +517,5 @@ def read_simulation_subregion(
 
     ds = xr.Dataset(var_arrays)
 
-    # Attach metadata attrs — same as read_simulation
-    try:
-        if "time" in dpy.inputs and "dt" in dpy.inputs["time"]:
-            ds.attrs["dt"] = float(dpy.inputs["time"]["dt"])
-    except Exception:
-        pass
-    try:
-        grid = dpy.inputs.get("grid", {})
-        for k in ("dx", "dy", "dz"):
-            if k in grid:
-                ds.attrs[k] = float(grid[k])
-    except Exception:
-        pass
-
+    _attach_sim_attrs(ds, dpy)
     return ds
