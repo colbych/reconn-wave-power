@@ -186,6 +186,91 @@ def compute_komega_2d(
     return k_rad, omega, P
 
 
+def compute_fft_map(
+    da: xr.DataArray,
+    dt: float,
+    window: str = "hann",
+    detrend: bool = True,
+) -> xr.DataArray:
+    """Compute a per-pixel complex FFT over a 2-D spatial subregion.
+
+    For every (x, y) point in *da*, the time-series is windowed and
+    FFT'd, returning the complex one-sided spectrum.  Storing the complex
+    amplitudes (rather than squaring to get a PSD) preserves phase, which
+    is required to compute cross-spectral quantities such as the Poynting
+    flux S = Re(E × B*).
+
+    Normalisation
+    -------------
+    The stored coefficients are scaled by ``1 / sqrt(fs * n)`` so that
+    ``|fft_map|**2`` equals the one-sided PSD *before* the factor-of-2
+    correction applied in :func:`compute_psd_time`.  The cross-spectral
+    Poynting flux is then::
+
+        Sx = Re(fft_Ey * conj(fft_Bz) - fft_Ez * conj(fft_By))
+
+    and has units consistent with the auto-PSDs in the companion
+    ``psd_`` files (up to the one-sided factor of 2 on interior bins).
+
+    Parameters
+    ----------
+    da : xr.DataArray
+        Must have dimensions ``("time", "x", "y")``.
+    dt : float
+        Temporal spacing between samples (``dt_output = dt * ndump``).
+    window : str
+        Window function name (e.g. ``"hann"``).
+    detrend : bool
+        If True, subtract the mean along the time axis before computing.
+
+    Returns
+    -------
+    xr.DataArray
+        Complex128, dimensions ``("x", "y", "frequency")``.
+        Coordinates ``x``, ``y`` are inherited from *da*;
+        ``frequency`` is the one-sided rfft frequency array in Hz.
+    """
+    for dim in ("time", "x", "y"):
+        if dim not in da.dims:
+            raise ValueError(
+                f"DataArray must have dim '{dim}', got dims {tuple(da.dims)}"
+            )
+
+    arr = da
+    if detrend:
+        arr = arr - arr.mean(dim="time")
+
+    data = arr.values                          # shape: (n_time, nx, ny)
+    axis_num = arr.get_axis_num("time")
+    n = data.shape[axis_num]
+    fs = 1.0 / dt
+
+    # Apply window along time axis
+    w = signal.get_window(window, n)
+    shape = [1] * data.ndim
+    shape[axis_num] = n
+    data = data * w.reshape(tuple(shape))
+
+    # One-sided complex FFT; normalise so |fft|^2 ~ psd (pre one-sided factor)
+    fft_vals = np.fft.rfft(data, axis=axis_num)
+    fft_vals = fft_vals / np.sqrt(fs * n)
+
+    f = np.fft.rfftfreq(n, d=dt)
+
+    # Move frequency axis from position 0 → last: (n_freq, nx, ny) → (nx, ny, n_freq)
+    fft_map = np.moveaxis(fft_vals, axis_num, -1)
+
+    return xr.DataArray(
+        fft_map,
+        dims=("x", "y", "frequency"),
+        coords={
+            "x": da.coords["x"],
+            "y": da.coords["y"],
+            "frequency": f,
+        },
+    )
+
+
 def compute_psd_map(
     da: xr.DataArray,
     dt: float,
